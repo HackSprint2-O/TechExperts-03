@@ -4,7 +4,9 @@ import requests
 import json
 import jwt
 import datetime
+from datetime import timezone
 from functools import wraps
+from pymongo import MongoClient
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -12,7 +14,36 @@ CORS(app)  # Enable CORS for all routes
 OLLAMA_URL = "http://localhost:11434/api/generate"
 JWT_SECRET = "your-secret-key"  # In production, use environment variable
 
+# MongoDB connection
+try:
+    client = MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=5000)
+    # Test the connection
+    client.admin.command('ping')
+    print("✅ Successfully connected to MongoDB!")
 
+    # Create database if it doesn't exist (MongoDB creates on first write, but we'll ensure collections)
+    db = client['edubot_db']
+
+    # Create collections if they don't exist
+    if 'users' not in db.list_collection_names():
+        db.create_collection('users')
+        print("✅ Created 'users' collection")
+    else:
+        print("✅ 'users' collection already exists")
+
+    if 'chat_history' not in db.list_collection_names():
+        db.create_collection('chat_history')
+        print("✅ Created 'chat_history' collection")
+    else:
+        print("✅ 'chat_history' collection already exists")
+
+    users_collection = db['users']
+    chat_history_collection = db['chat_history']
+    print("✅ Database and collections initialized!")
+except Exception as e:
+    print(f"❌ MongoDB connection failed: {e}")
+    print("Please ensure MongoDB is running on localhost:27017")
+    exit(1)
 
 def token_required(f):
     @wraps(f)
@@ -49,7 +80,7 @@ def register():
         'username': username,
         'email': email,
         'password': password,  # In production, hash the password
-        'created_at': datetime.datetime.utcnow()
+        'created_at': datetime.datetime.now(timezone.utc)
     }
     users_collection.insert_one(user_doc)
     return jsonify({'message': 'User registered successfully'}), 201
@@ -82,10 +113,10 @@ def chat():
         if not user_message:
             return jsonify({'error': 'No message provided'}), 400
 
-        # Prepare payload for Ollama
+        # Prepare payload for Ollama with strong English-only instruction
         payload = {
             "model": "mistral:latest",
-            "prompt": user_message,
+            "prompt": f"You are EduBot, an educational AI assistant. You MUST respond ONLY in English, regardless of the user's language. Never respond in any other language. User's question: {user_message}",
             "stream": False
         }
 
@@ -101,7 +132,7 @@ def chat():
                 'user_email': user_email,
                 'user_message': user_message,
                 'bot_response': bot_response,
-                'timestamp': datetime.datetime.utcnow()
+                'timestamp': datetime.datetime.now(timezone.utc)
             }
             chat_history_collection.insert_one(chat_doc)
 
